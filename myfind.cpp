@@ -1,5 +1,5 @@
 #include <iostream>
-#include <string>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -10,8 +10,10 @@
 #include <filesystem>
 #include <thread>
 #include <mutex>
+#include <dirent.h>
 
 using namespace std;
+// namespace fs = std::filesystem;
 
 std::mutex m;
 
@@ -21,11 +23,19 @@ void printUsage(string programName)
     return;
 }
 
-void findFile(string searchPath, string fileName)
+void findFile(string searchPath, string fileName, bool recursive, bool caseInsensitiveMode)
 {
-    m.lock();
-    cout << fileName << endl;
-    m.unlock();
+    DIR* directory;
+    dirent *f;
+    if (( directory= opendir (searchPath.c_str())) != NULL) {
+
+        while ((f = readdir (directory)) != NULL) {
+            if(caseInsensitiveMode ? strcasecmp(fileName.c_str(), f->d_name) == 0 : strcmp(fileName.c_str(), f->d_name) == 0) {
+                cout << this_thread::get_id() << " : " << fileName << " : " << filesystem::current_path() << endl;
+                break;
+            }
+        }
+    }
 }
 
 /* Entry Point */
@@ -37,6 +47,7 @@ int main(int argc, char *argv[])
     bool error = false;
 
     bool recMode = false;
+    bool caseInsensitiveMode = false;
     string searchPath;
     vector<string> filenames;
 
@@ -63,6 +74,7 @@ int main(int argc, char *argv[])
                     printUsage(programName);
                 }
                 optionIUsed = true;
+                caseInsensitiveMode = true;
                 break;
             default:
                 assert(0);
@@ -73,10 +85,10 @@ int main(int argc, char *argv[])
         printUsage(programName);
         exit(1);
     }
-    if ((argc < optind + 1) || (argc > optind + 2)) /* falsche Anzahl an Optionen */
-    {
-        printUsage(programName);
-    }
+    // if ((argc < optind + 1) || (argc > optind + 2)) /* falsche Anzahl an Optionen */
+    // {
+    //     printUsage(programName);
+    // }
 
     /* Die restlichen Argumente, die keine Optionen sind, befinden sich in
 
@@ -86,7 +98,7 @@ int main(int argc, char *argv[])
     while (optind < argc)
     {
         /* aktuelles Argument: argv[optind] */
-        cout << programName << ": parsing argument " << argv[optind] << endl;
+        // cout << programName << ": parsing argument " << argv[optind] << endl;
 
         if(argCounter == 0)
             searchPath = argv[optind];
@@ -105,7 +117,7 @@ int main(int argc, char *argv[])
     // cout << searchPath << endl;
     for(int i = 0; i < filenames.size(); i++) {
         // cout << f << endl;
-        threads[i] = thread(findFile, searchPath, filenames[i]);
+        threads[i] = thread(findFile, searchPath, filenames[i], recMode, caseInsensitiveMode);
     }
 
     for(int i = 0; i < filenames.size(); i++) {

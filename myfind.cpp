@@ -1,21 +1,12 @@
 #include <iostream>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
-/* Include Datei für getopt(); getopt.h geht auch, ist aber älter. */
-#include <unistd.h>
 #include <vector>
 #include <getopt.h>
 #include <filesystem>
-#include <thread>
-#include <mutex>
-#include <dirent.h>
+#include <sys/wait.h>
+#include <cassert>
+#include <cstring>
 
 using namespace std;
-// namespace fs = std::filesystem;
-
-std::mutex m;
 
 void printUsage(string programName)
 {
@@ -23,17 +14,28 @@ void printUsage(string programName)
     return;
 }
 
+void checkFile(bool caseInsensitiveMode, const char* fileName, filesystem::directory_entry entry)
+{
+    if(caseInsensitiveMode ? strcasecmp(fileName, entry.path().filename().c_str()) == 0 : strcmp(fileName, entry.path().filename().c_str()) == 0) {
+        cout << getpid() << " : " << fileName << " : " << filesystem::canonical(entry.path()) << endl;
+    }
+}
+
 void findFile(string searchPath, string fileName, bool recursive, bool caseInsensitiveMode)
 {
-    DIR* directory;
-    dirent *f;
-    if (( directory= opendir (searchPath.c_str())) != NULL) {
+    if(!filesystem::exists(searchPath))
+        return;
 
-        while ((f = readdir (directory)) != NULL) {
-            if(caseInsensitiveMode ? strcasecmp(fileName.c_str(), f->d_name) == 0 : strcmp(fileName.c_str(), f->d_name) == 0) {
-                cout << this_thread::get_id() << " : " << fileName << " : " << filesystem::current_path() << endl;
-                break;
-            }
+    if(!recursive) {
+        for (auto& entry : filesystem::directory_iterator(searchPath))
+        {
+            if (!filesystem::is_directory(entry))
+                checkFile(caseInsensitiveMode, fileName.c_str(), entry);
+        }
+    } else {
+        for (auto& entry : filesystem::recursive_directory_iterator(searchPath)) {
+            if (!filesystem::is_directory(entry))
+                checkFile(caseInsensitiveMode, fileName.c_str(), entry);
         }
     }
 }
@@ -42,8 +44,6 @@ void findFile(string searchPath, string fileName, bool recursive, bool caseInsen
 int main(int argc, char *argv[])
 {
     int c;
-    bool optionRUsed = false;
-    bool optionIUsed = false;
     bool error = false;
 
     bool recMode = false;
@@ -60,20 +60,19 @@ int main(int argc, char *argv[])
             case '?':
                 error = true;
                 cerr << programName << " error: Unknown option." << endl;
+                break;
             case 'R':
-                if(optionRUsed) {
+                if(recMode) {
                     error = true;
                     printUsage(programName);
                 }
-                optionRUsed = true;
                 recMode = true;
                 break;
             case 'i':
-                if(optionIUsed) {
+                if(caseInsensitiveMode) {
                     error = true;
                     printUsage(programName);
                 }
-                optionIUsed = true;
                 caseInsensitiveMode = true;
                 break;
             default:
@@ -81,48 +80,49 @@ int main(int argc, char *argv[])
         }
     }
 
+    // check for the minimum required number of arguments
+    if (argc - optind < 2) {
+        error = true;
+    }
+
     if(error) {
         printUsage(programName);
         exit(1);
     }
-    // if ((argc < optind + 1) || (argc > optind + 2)) /* falsche Anzahl an Optionen */
-    // {
-    //     printUsage(programName);
-    // }
 
-    /* Die restlichen Argumente, die keine Optionen sind, befinden sich in
-
-        * argv[optind] bis argv[argc-1]
-        */
-    int argCounter = 0;
+    /* extract searchpath and filenames in argv[optind] to argv[argc-1] */
+    searchPath = argv[optind];
+    optind++;
     while (optind < argc)
     {
-        /* aktuelles Argument: argv[optind] */
+        /* current argument: argv[optind] */
         // cout << programName << ": parsing argument " << argv[optind] << endl;
-
-        if(argCounter == 0)
-            searchPath = argv[optind];
-        else
-            filenames.push_back(argv[optind]);
-
+        filenames.push_back(argv[optind]);
         optind++;
-        argCounter++;
     }
+
     if(searchPath.empty() || filenames.size() < 1) {
         printUsage(programName);
         exit(1);
     }
 
-    thread threads[filenames.size()];
-    // cout << searchPath << endl;
-    for(int i = 0; i < filenames.size(); i++) {
-        // cout << f << endl;
-        threads[i] = thread(findFile, searchPath, filenames[i], recMode, caseInsensitiveMode);
+    for (auto filename : filenames)
+    {
+        auto pid = fork();
+        if (pid == 0)
+        {
+            findFile(searchPath, filename, recMode, caseInsensitiveMode);
+            break;
+        }
     }
 
-    for(int i = 0; i < filenames.size(); i++) {
-        threads[i].join();
+    pid_t childpid;
+    while ((childpid = waitpid(-1, NULL, 0)))
+    {
+        if ((childpid == -1) && (errno != EINTR))
+        {
+            break;
+        }
     }
-
     return 0;
 }
